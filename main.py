@@ -65,8 +65,8 @@ class SttBaseReminder(BaseModel):
     message_id: PositiveInt
 
 
-class SttCreateVideoLabDto(SttBaseReminder, Audio):
-    pass
+class SttCreateVideoLabDto(SttBaseReminder):
+    youtube_url: str
 
 
 class SttResponseVideoLabDto(SttBaseReminder, Text):
@@ -124,10 +124,8 @@ async def process_youtube_url(message: Message, state: FSMContext) -> None:
 
         await message.answer("Отлично, ссылка на YouTube получена, скоро пришлю ответ...", reply_markup=main_kb)
 
-        audio_base64_str = await download_audio(url)
-
         dto: SttCreateVideoLabDto = SttCreateVideoLabDto(
-            audio=audio_base64_str,
+            youtube_url=url,
             user_id=message.from_user.id,
             message_id=message.message_id,
         )
@@ -155,49 +153,14 @@ async def process_transcribed_text(body: SttResponseVideoLabDto, message: Rabbit
 
         file = BufferedInputFile(io.BytesIO(body.text.encode("utf-8")).getvalue(), filename="transcription.txt")
         if last_msg:
-            await bot.send_document(chat_id=body.user_id, reply_to_message_id=last_msg.message_id, document=file, caption="✅ Вот текст в документе")
+            await bot.send_document(chat_id=body.user_id, reply_to_message_id=last_msg.message_id, document=file,
+                                    caption="✅ Вот текст в документе")
         else:
             await bot.send_document(chat_id=body.user_id, document=file, caption="✅ Вот текст в документе")
         await message.ack()
     except Exception as e:
         logger.error(e)
         await message.nack(requeue=True)
-
-
-
-async def download_audio(url: str) -> str:
-    """
-    Скачивает аудио из YouTube во временный файл,
-    конвертирует его в base64-строку и возвращает.
-    """
-
-    def _download():
-        with tempfile.TemporaryDirectory() as temp_dir:
-            output_path = os.path.join(temp_dir, "%(id)s.%(ext)s")
-
-            ydl_opts = {
-                "format": "bestaudio/best",
-                "outtmpl": output_path,
-                "quiet": True,
-                "noplaylist": True,
-                "postprocessors": [
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
-                    }
-                ],
-            }
-
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                file_path = ydl.prepare_filename(info)
-                file_path = os.path.splitext(file_path)[0] + ".mp3"
-
-            with open(file_path, "rb") as f:
-                return base64.b64encode(f.read()).decode("utf-8")
-
-    return await asyncio.to_thread(_download)
 
 
 # Run the bot + faststream
@@ -211,6 +174,7 @@ async def main() -> None:
         dp.start_polling(bot),
         app.run()
     )
+
 
 if __name__ == "__main__":
     asyncio.run(main())
