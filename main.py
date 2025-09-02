@@ -1,19 +1,14 @@
 import asyncio
-import base64
 import io
 import logging
-import os
 import re
-import tempfile
 
-import yt_dlp
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.types import BufferedInputFile, BotCommand
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, \
-    InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from faststream import FastStream
 from faststream.rabbit import RabbitBroker, RabbitExchange, RabbitQueue, RabbitMessage
 from pydantic import AmqpDsn, Field, BaseModel, PositiveInt
