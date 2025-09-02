@@ -1,0 +1,11 @@
+[project]
+name = "videolab-stt-tg-bot"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = [
+    "aiogram>=3.22.0",
+    "faststream[rabbit]>=0.5.48",
+    "pydantic-settings>=2.10.1",
+    "yt-dlp>=2025.8.27",
+]
