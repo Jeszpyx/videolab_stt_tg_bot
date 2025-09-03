@@ -2,13 +2,14 @@ import asyncio
 import io
 import logging
 import re
+from typing import Callable, Dict, Any, Awaitable
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, BaseMiddleware
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
-from aiogram.types import BufferedInputFile, BotCommand
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import BufferedInputFile, BotCommand, TelegramObject
+from aiogram.types import Message
 from faststream import FastStream
 from faststream.rabbit import RabbitBroker, RabbitExchange, RabbitQueue, RabbitMessage
 from pydantic import AmqpDsn, Field, BaseModel, PositiveInt
@@ -72,52 +73,56 @@ app = FastStream(broker)
 dp = Dispatcher()
 bot = Bot(token=config.BOT_TOKEN)
 
-get_text_from_youtube_url = "Получить текст из YouTube"
-
-main_kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text=get_text_from_youtube_url)]
-    ],
-    resize_keyboard=True
-)
+admins = [556203349, 2025671326]
 
 
 class Form(StatesGroup):
     youtube_url = State()
 
 
-YOUTUBE_REGEX = re.compile(
-    r'^(https?://)?(www\.)?(youtube\.com|youtu\.be)/.+$'
+YOUTUBE_URL_REGEX = re.compile(
+    r'(https?://)?(www\.)?(youtube|youtu\.be)/.+',
+    re.IGNORECASE
 )
 
 transcriptions: dict[int, str] = {}
 
 
+class AdminOnlyMiddleware(BaseMiddleware):
+    async def __call__(
+            self,
+            handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+            event: TelegramObject,
+            data: Dict[str, Any]
+    ) -> Any:
+        # Убедимся, что событие — это Message и у него есть from_user
+        if isinstance(event, Message):
+            user_id = event.from_user.id
+            if user_id not in admins:
+                # Не пропускаем дальше, можно ответить или проигнорировать
+                if event.text:  # чтобы не сломать обработку других типов
+                    await event.answer("❌ Доступ только для администраторов.")
+                return
+
+        # Если админ — продолжаем обработку
+        return await handler(event, data)
+
+
+dp.message.middleware(AdminOnlyMiddleware())
+
+
 @dp.message(CommandStart())
 async def command_start_handler(message: Message) -> None:
-    await message.answer(f"Привет, {message.from_user.full_name}!\nВыбери действие на клавиатуре:",
-                         reply_markup=main_kb)
-
-
-@dp.message(F.text == get_text_from_youtube_url)
-async def get_youtube_url(message: Message, state: FSMContext) -> None:
-    await state.set_state(Form.youtube_url)
     await message.answer(
-        "Хорошо, отправь мне ссылку на YouTube",
-        reply_markup=ReplyKeyboardRemove(),
-    )
+        f"Привет, {message.from_user.full_name}!\nПрисылай мне ссылку на YouTube, а я в ответ пришлю текст сообщением и текстовым файлом 😊")
 
 
-@dp.message(Form.youtube_url)
-async def process_youtube_url(message: Message, state: FSMContext) -> None:
+@dp.message(F.text.regexp(YOUTUBE_URL_REGEX) | F.text.startswith("https://www.youtube.com/watch"))
+async def get_youtube_url(message: Message, state: FSMContext) -> None:
     try:
         url = message.text.strip()
 
-        if not YOUTUBE_REGEX.match(url):
-            await message.answer("Это не похоже на ссылку YouTube, попробуйте ещё раз 🙂")
-            return
-
-        await message.answer("Отлично, ссылка на YouTube получена, скоро пришлю ответ...", reply_markup=main_kb)
+        await message.answer("Отлично, ссылка на YouTube получена, скоро пришлю ответ...", )
 
         dto: SttCreateVideoLabDto = SttCreateVideoLabDto(
             youtube_url=url,
@@ -135,15 +140,14 @@ async def process_youtube_url(message: Message, state: FSMContext) -> None:
 @broker.subscriber(queue=videolab_output_queue, exchange=exchange, no_ack=True)
 async def process_transcribed_text(body: SttResponseVideoLabDto, message: RabbitMessage) -> None:
     try:
-        MAX_MESSAGE_LENGTH = 4000  # немного меньше лимита для безопасности
 
         text = body.text
         last_msg = None
-        for i in range(0, len(text), MAX_MESSAGE_LENGTH):
+        for i in range(0, len(text), 4000):
             last_msg = await bot.send_message(
                 chat_id=body.user_id,
                 reply_to_message_id=body.message_id,
-                text=text[i:i + MAX_MESSAGE_LENGTH]
+                text=text[i:i + 4000]
             )
 
         file = BufferedInputFile(io.BytesIO(body.text.encode("utf-8")).getvalue(), filename="transcription.txt")
@@ -163,6 +167,10 @@ async def main() -> None:
     await bot.set_my_commands([
         BotCommand(command="start", description="Запустить бота и показать клавиатуру")
     ])
+
+    for admin_id in admins:
+        await bot.send_message(chat_id=admin_id, text='Привет, я запустился и готов принимать ссылки 📹',
+                               disable_notification=True)
 
     # запускаем faststream и aiogram параллельно
     await asyncio.gather(
